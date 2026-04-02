@@ -1,0 +1,55 @@
+enterprise-agent/
+│
+├── backend/
+│   ├── agents/
+│   │   ├── __init__.py
+│   │   ├── orchestrator.py        # breaks goal into tasks
+│   │   ├── research_agent.py      # tavily web search
+│   │   ├── writer_agent.py        # generates final output
+│   │   └── analyst_agent.py       # insights & comparisons
+│   │
+│   ├── graph/
+│   │   ├── __init__.py
+│   │   └── workflow.py            # LangGraph state + edges
+│   │
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── routes.py              # FastAPI endpoints
+│   │   └── schemas.py             # Pydantic models
+│   │
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── config.py              # env vars, API keys
+│   │   └── llm.py                 # Gemini client setup
+│   │
+│   ├── main.py                    # FastAPI app entry point
+│   ├── requirements.txt
+│   └── Dockerfile
+│
+├── frontend/
+│   ├── public/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── GoalInput.jsx      # the text input + run button
+│   │   │   ├── AgentLogs.jsx      # live activity feed
+│   │   │   └── OutputPanel.jsx    # final report display
+│   │   │
+│   │   ├── hooks/
+│   │   │   └── useAgentStream.js  # SSE streaming hook
+│   │   │
+│   │   ├── services/
+│   │   │   └── api.js             # axios calls to backend
+│   │   │
+│   │   ├── App.jsx
+│   │   └── main.jsx
+│   │
+│   ├── package.json
+│   └── Dockerfile
+│
+├── docker-compose.yml             # runs frontend + backend together
+├── nginx/
+│   └── nginx.conf                 # reverse proxy config
+│
+├── .env                           # GEMINI_KEY, TAVILY_KEY etc
+├── .gitignore
+└── README.md
