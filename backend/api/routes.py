@@ -1,350 +1,368 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException
 from api.schema import (
-    GoalRequest, AgentResponse, CampaignRequest, ProspectingRequest,
-    DiscoveryRequest, PipelineRequest, OverrideRequest
+    GoalRequest, AgentResponse, SendEmailRequest, 
+    SendProfessionalEmailRequest, EmailSendResponse, 
+    EmailStats, GmailAuthStatus, BulkEmailRequest,
+    ScheduleCampaignRequest, ScheduleFollowupRequest,
+    GetMembersRequest, GenerateMessagesRequest, GenerateSingleMessageRequest
 )
 from graph.workflow import pipeline, AgentState
-from agents.coordinator_agent import orchestrate_campaign, monitor_pipeline, human_override, scale_operations, SwarmMode
-from agents.prospector_agent import prospect
-from agents.outreach_agent import generate_campaign, execute_campaign
-from agents.discovery_agent import prepare_discovery_call
-from agents.negotiation_agent import generate_proposal, dynamic_pricing
-from agents.optimizer_agent import analyze_deal_outcome, run_continuous_experiments
-from services.analytics_service import analytics_service
-from services.meeting_service import meeting_service
-from services.lead_service import lead_service
+from services.email_channel import generate_email_templates, send_campaign_email, create_follow_up_schedule
+from services.gmail_service_pro import get_gmail_service
+from datetime import datetime
 
 router = APIRouter()
 
-# ============================================================================
-# PHASE 1: SUPERHUMAN TEAMMATE ENDPOINTS
-# ============================================================================
-
+# ============ CAMPAIGN ENDPOINTS ============
 @router.post("/run", response_model=AgentResponse)
 async def run_agent(request: GoalRequest):
-    """
-    Complete agent workflow:
-    1. Find leads from Apollo via Prospector Agent
-    2. Generate campaign via Outreach Agent with Groq
-    3. Execute campaign (send real emails via SendGrid)
-    """
-    logs = []
-    all_leads = []
-    campaign_data = {}
-    emails = {}
-    tasks = []
-    
-    try:
-        # Step 1: Find leads using Prospector Agent
-        logs.append("🔍 Step 1: Finding leads...")
-        prospect_result = await prospect(
-            company_name=request.company,
-            deal_size="mid-market"
-        )
-        logs.extend(prospect_result.get("logs", []))
-        all_leads = prospect_result.get("leads", [])
-        
-        if not all_leads:
-            return AgentResponse(
-                emails={},
-                analysis={"status": "no_leads"},
-                logs=logs + ["❌ No leads found to outreach"],
-                tasks=[]
-            )
-        
-        logs.append(f"✅ Found {len(all_leads)} leads")
-        
-        # Step 2: Generate campaign using Outreach Agent with Groq LLM
-        logs.append("🤖 Step 2: Generating campaign with AI...")
-        campaign_result = await generate_campaign(
-            target_company=request.company,
-            leads=all_leads[:10],  # Use top 10 leads for context
-            value_prop=request.goal or "help you grow revenue"
-        )
-        logs.extend(campaign_result.get("logs", []))
-        campaign_data = campaign_result.get("campaign", {})
-        emails = campaign_data
-        
-        # Step 3: Execute campaign (send real emails)
-        logs.append("📧 Step 3: Executing outreach campaign...")
-        exec_result = await execute_campaign(
-            campaign_id="campaign_1",
-            leads=all_leads[:50],  # Send to first 50 leads
-            campaign_data=campaign_data
-        )
-        logs.extend(exec_result.get("logs", []))
-        
-        # Create tasks for follow-ups
-        tasks = [
-            f"Follow-up email day 3 to {len(all_leads)} leads",
-            f"Monitor open rates and engagement",
-            f"Book meetings from positive replies"
-        ]
-        
-        logs.append("✅ Campaign execution complete!")
-        
-        return AgentResponse(
-            emails=emails,
-            analysis={
-                "leads_found": len(all_leads),
-                "emails_sent": exec_result.get("sent", 0),
-                "status": "success"
-            },
-            logs=logs,
-            tasks=tasks
-        )
-        
-    except Exception as e:
-        logs.append(f"❌ Error: {str(e)}")
-        import traceback
-        logs.append(traceback.format_exc())
-        return AgentResponse(
-            emails={},
-            analysis={"status": "error", "error": str(e)},
-            logs=logs,
-            tasks=[]
-        )
-
-# PROSPECTING ENDPOINTS
-@router.post("/prospecting/find-leads")
-async def find_leads(request: ProspectingRequest):
-    """Find and enrich leads from Apollo, Hunter, LinkedIn, intent signals"""
-    try:
-        # Call lead service - it handles discovery, enrichment, and scoring
-        result = await lead_service.find_leads(
-            company_name=request.company_name,
-            industry=request.industry,
-            job_titles=request.target_titles or [],
-            technology_stack=request.technology_stack or [],
-            limit=request.limit or 50,
-        )
-        
-        # Enrich and score each lead
-        if result.get("leads"):
-            for lead_dict in result["leads"]:
-                enriched = await lead_service.enrich_lead(lead_dict)
-                scored = await lead_service.score_lead(enriched)
-                # Update the lead in the result
-                idx = result["leads"].index(lead_dict)
-                result["leads"][idx] = scored
-        
-        result["enrichment_complete"] = True
-        return result
-    
-    except Exception as e:
-        return {
-            "leads_found": 0,
-            "high_priority": 0,
-            "leads": [],
-            "enrichment_complete": False,
-            "logs": [f"❌ Error: {str(e)}"],
-        }
-
-# OUTREACH ENDPOINTS
-@router.post("/campaigns/generate")
-async def create_campaign(request: CampaignRequest):
-    """Generate personalized campaign with Groq AI"""
-    campaign = await generate_campaign(
-        target_company=request.target_company,
-        leads=request.target_personas or [],
-        value_prop=request.value_proposition,
-        tone=request.tone or "professional",
-    )
-    return campaign
-
-@router.post("/campaigns/{campaign_id}/execute")
-async def execute_campaign_endpoint(campaign_id: str, request_data: dict):
-    """Execute campaign across leads (SENDS REAL EMAILS)"""
-    leads = request_data.get("leads", [])
-    campaign_data = request_data.get("campaign", {})
-    result = await execute_campaign(campaign_id, leads, campaign_data)
-    return result
-
-@router.get("/campaigns/{campaign_id}/metrics")
-async def get_campaign_metrics(campaign_id: str):
-    """Get real-time engagement metrics for campaign"""
-    return {
-        "campaign_id": campaign_id,
-        "metrics": {
-            "emails_sent": 150,
-            "open_rate": 0.42,
-            "click_rate": 0.15,
-            "reply_rate": 0.08,
-            "meetings_booked": 12,
-        }
-    }
-
-# MEETING BOOKING ENDPOINTS
-@router.get("/meetings/available-slots")
-async def get_available_slots(
-    lead_id: str,
-    date_range_days: int = Query(7),
-    preferred_time: str = Query(None)
-):
-    """Get available calendar slots"""
-    slots = await meeting_service.find_available_slots(
-        lead_id=lead_id,
-        date_range_days=date_range_days,
-        preferred_time=preferred_time,
-    )
-    return {"available_slots": slots}
-
-@router.post("/meetings/book")
-async def book_meeting(request: dict):
-    """Book a discovery call directly to both calendars"""
-    from datetime import datetime
-    meeting = await meeting_service.book_meeting(
-        lead_id=request["lead_id"],
-        lead_email=request["lead_email"],
-        lead_name=request["lead_name"],
-        slot_datetime=datetime.fromisoformat(request["slot_datetime"]),
-        meeting_type=request.get("meeting_type", "discovery"),
-    )
-    return meeting.__dict__ if meeting else {"error": "Failed to book"}
-
-# DISCOVERY CALL ENDPOINTS
-@router.post("/discovery/prepare")
-async def prepare_discovery(request: DiscoveryRequest):
-    """Prepare personalized discovery script"""
-    script = await prepare_discovery_call(
-        lead_name=request.lead_name,
+    """Run the AI agent campaign generator"""
+    result = pipeline.invoke(AgentState(
         company=request.company,
-        company_research=request.company_research or {},
-        pain_points=request.pain_points or [],
+        goal=request.goal,
+        tasks=[],
+        research={},
+        analysis={},
+        emails={},
+        email_templates={},
+        variants={},
+        logs=[],
+        analytics={},
+        follow_up_schedule={}
+    ))
+    
+    # Generate professional email templates
+    email_templates = generate_email_templates(
+        request.company,
+        result["analysis"],
+        result["emails"]
     )
-    return script
-
-# PROPOSAL & NEGOTIATION ENDPOINTS
-@router.post("/deals/{deal_id}/proposal")
-async def generate_proposal_endpoint(deal_id: str, request: dict):
-    """Generate custom proposal"""
-    proposal = await generate_proposal(
-        deal_id=deal_id,
-        prospect_company=request["prospect_company"],
-        deal_value=request["deal_value"],
-        pain_points=request.get("pain_points", []),
-        discovered_needs=request.get("discovered_needs", {}),
+    
+    # Create follow-up schedule
+    follow_up_schedule = create_follow_up_schedule(
+        request.company,
+        result["analysis"].get("decision_maker", "Team")
     )
-    return proposal
-
-@router.post("/deals/{deal_id}/pricing")
-async def calculate_dynamic_pricing(deal_id: str, request: dict):
-    """Calculate dynamic pricing with guardrails"""
-    pricing = await dynamic_pricing(
-        deal_id=deal_id,
-        annual_contract_value=request["annual_contract_value"],
-        commitment_length_years=request["commitment_length_years"],
-        competitor_pressure=request.get("competitor_pressure", False),
+    
+    return AgentResponse(
+        emails=result["emails"],
+        email_templates=email_templates,
+        analysis=result["analysis"],
+        variants=result["variants"],
+        logs=result["logs"],
+        tasks=result["tasks"],
+        analytics=result["analytics"],
+        follow_up_schedule=follow_up_schedule
     )
-    return pricing
 
-# ANALYTICS & INSIGHTS ENDPOINTS
-@router.get("/analytics/pipeline")
-async def get_pipeline_analytics():
-    """Real-time pipeline visibility"""
-    return await analytics_service.get_pipeline_snapshot()
+# ============ EMAIL SENDING ENDPOINTS ============
+@router.post("/send-email", response_model=EmailSendResponse)
+async def send_email(request: SendEmailRequest):
+    """Send a professional email via Gmail with tracking"""
+    try:
+        gmail = get_gmail_service()
+        
+        if not gmail.authenticate():
+            raise HTTPException(status_code=401, detail="Gmail authentication failed")
+        
+        success, message, message_id = gmail.send_email(
+            to=request.to_email,
+            subject=request.subject,
+            html_body=request.html_body,
+            cc=request.cc,
+            bcc=request.bcc,
+            priority=request.priority.value
+        )
+        
+        return EmailSendResponse(
+            success=success,
+            message=message,
+            email_id=f"{request.to_email}_{datetime.now().timestamp()}",
+            message_id=message_id
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/analytics/forecast")
-async def get_revenue_forecast(quarter: str = "Q2_2026"):
-    """Quarterly revenue forecast"""
-    return await analytics_service.forecast_quarterly_revenue(quarter)
+@router.post("/send-professional-email", response_model=EmailSendResponse)
+async def send_professional_email(request: SendProfessionalEmailRequest):
+    """Send a professional formatted email with company branding"""
+    try:
+        gmail = get_gmail_service()
+        
+        if not gmail.authenticate():
+            raise HTTPException(status_code=401, detail="Gmail authentication failed")
+        
+        success, message, message_id = gmail.send_professional_email(
+            to=request.to_email,
+            company=request.company,
+            subject_line=request.subject_line,
+            body_content=request.body_content,
+            decision_maker=request.decision_maker
+        )
+        
+        return EmailSendResponse(
+            success=success,
+            message=message,
+            email_id=f"{request.to_email}_{datetime.now().timestamp()}",
+            message_id=message_id
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/analytics/at-risk-deals")
-async def get_at_risk_deals():
-    """Identify deals at risk"""
-    return await analytics_service.identify_at_risk_deals()
+# ============ EMAIL STATUS & TRACKING ============
+@router.get("/email-stats", response_model=EmailStats)
+async def get_email_statistics():
+    """Get email sending statistics and status"""
+    try:
+        gmail = get_gmail_service()
+        
+        sent = gmail.get_sent_emails()
+        pending = gmail.get_pending_emails()
+        failed = gmail.get_failed_emails()
+        
+        total_sent = len(sent)
+        success_rate = (total_sent / (total_sent + len(failed)) * 100) if (total_sent + len(failed)) > 0 else 0
+        
+        return EmailStats(
+            total_sent=total_sent,
+            pending=len(pending),
+            failed=len(failed),
+            success_rate=success_rate,
+            sent_emails=sent[:10],
+            pending_emails=pending[:10],
+            failed_emails=failed[:10]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-# HUMAN-IN-THE-LOOP ENDPOINTS
-@router.post("/control/override")
-async def human_override_endpoint(request: OverrideRequest):
-    """Human takes control of situation"""
-    result = await human_override(
-        override_type=request.override_type,
-        target_id=request.target_id,
-        override_data=request.override_data or {},
-    )
-    return result
+@router.get("/gmail-auth-status", response_model=GmailAuthStatus)
+async def get_gmail_auth_status():
+    """Get Gmail authentication status"""
+    try:
+        gmail = get_gmail_service()
+        authenticated = gmail.authenticate()
+        
+        if authenticated:
+            user_info = gmail.get_authenticated_user()
+            return GmailAuthStatus(
+                is_authenticated=True,
+                email=user_info.get("email"),
+                message_count=user_info.get("message_count"),
+                threads_count=user_info.get("threads"),
+                status="✅ Connected to Gmail"
+            )
+        else:
+            return GmailAuthStatus(
+                is_authenticated=False,
+                status="❌ Not authenticated"
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/control/pause-sequence/{sequence_id}")
-async def pause_sequence(sequence_id: str):
-    """Pause outreach sequence"""
-    # TODO: Implement sequence pause in outreach service
-    return {"status": "paused", "sequence_id": sequence_id}
+# ============ BULK OPERATIONS ============
+@router.post("/bulk-send-emails", response_model=dict)
+async def bulk_send_emails(request: BulkEmailRequest):
+    """Send emails to multiple recipients with tracking"""
+    try:
+        gmail = get_gmail_service()
+        
+        if not gmail.authenticate():
+            raise HTTPException(status_code=401, detail="Gmail authentication failed")
+        
+        results = []
+        for recipient in request.recipients:
+            success, message, msg_id = gmail.send_email(
+                to=recipient.get("email"),
+                subject=request.subject,
+                html_body=request.html_body,
+                priority="normal"
+            )
+            results.append({
+                "email": recipient.get("email"),
+                "success": success,
+                "message": message,
+                "message_id": msg_id
+            })
+        
+        sent_count = sum(1 for r in results if r["success"])
+        return {
+            "total": len(request.recipients),
+            "sent": sent_count,
+            "failed": len(request.recipients) - sent_count,
+            "results": results
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-# ============================================================================
-# PHASE 2: FULL AUTONOMY ENDPOINTS
-# ============================================================================
-
-@router.post("/swarm/orchestrate")
-async def orchestrate_full_campaign(request: CampaignRequest):
-    """Full autonomous campaign orchestration"""
-    result = await orchestrate_campaign(
-        mode=SwarmMode.PHASE_2_FULL_AUTONOMY,
-        goal=request.value_proposition,
-        target_company=request.target_company,
-        deal_size=request.deal_size,
-        target_personas=request.target_personas,
-    )
-    return result
-
-@router.get("/swarm/monitor")
-async def monitor_swarm_operations():
-    """Real-time swarm monitoring"""
-    return await monitor_pipeline(SwarmMode.PHASE_2_FULL_AUTONOMY)
-
-@router.post("/swarm/scale")
-async def scale_to_multiple(multiplier: int = Query(5)):
-    """One-click scaling (5x, 10x, etc)"""
-    return await scale_operations(multiplier)
-
-@router.get("/swarm/performance")
-async def get_agent_performance():
-    """Agent performance metrics"""
-    return await analytics_service.get_agent_performance_report()
-
-# OPTIMIZATION & LEARNING ENDPOINTS
-@router.post("/optimize/analyze-deal/{deal_id}")
-async def analyze_closed_deal(deal_id: str, request: dict):
-    """Analyze won/lost deal for learning"""
-    analysis = await analyze_deal_outcome(
-        deal_id=deal_id,
-        outcome=request["outcome"],
-        deal_data=request["deal_data"],
-        interactions=request["interactions"],
-    )
-    return analysis
-
-@router.get("/optimize/experiments")
-async def get_running_experiments():
-    """Get A/B tests running"""
-    return await run_continuous_experiments({})
-
-@router.get("/optimize/insights")
-async def get_improvement_insights():
-    """Get self-improvement metrics"""
-    # TODO: Implement in optimizer service
-    return {"improvements": "Multi-agent system improving metrics weekly"}
-
-# HEALTH & STATUS
+# ============ HEALTH CHECK ============
 @router.get("/health")
 async def health():
-    return {"status": "ok", "version": "1.0.0"}
-
-@router.get("/status")
-async def get_system_status():
-    """Complete system status"""
-    pipeline = await analytics_service.get_pipeline_snapshot()
+    """Health check endpoint"""
     return {
-        "timestamp": "2026-04-05T10:30:00Z",
-        "agents": {
-            "prospector": "running",
-            "outreach": "active",
-            "discovery": "standby",
-            "negotiation": "standby",
-            "optimizer": "running",
-        },
-        "pipeline": pipeline,
-        "active_campaigns": 5,
-        "leads_in_system": 245,
-        "health_score": 0.92,
+        "status": "ok",
+        "timestamp": datetime.now().isoformat(),
+        "version": "1.0.0"
     }
+
+# ============ GOOGLE CALENDAR ENDPOINTS ============
+@router.post("/calendar/schedule-campaign")
+async def schedule_campaign(request: ScheduleCampaignRequest):
+    """Schedule a campaign to send at specific time"""
+    try:
+        from services.calendar_service import CalendarService
+        from datetime import datetime as dt
+        
+        calendar = CalendarService()
+        if not calendar.authenticate():
+            raise HTTPException(status_code=401, detail="Calendar authentication failed")
+        
+        send_datetime = dt.fromisoformat(request.send_time)
+        result = calendar.schedule_campaign(request.campaign_name, send_datetime)
+        
+        if result['success']:
+            return {
+                "status": "scheduled",
+                "campaign": request.campaign_name,
+                "scheduled_time": request.send_time,
+                "event_id": result.get('event_id'),
+                "message": "✅ Campaign scheduled successfully"
+            }
+        else:
+            raise HTTPException(status_code=400, detail=result['error'])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/calendar/schedule-followup")
+async def schedule_followup(request: ScheduleFollowupRequest):
+    """Schedule a follow-up email for a campaign"""
+    try:
+        from services.calendar_service import CalendarService
+        from datetime import datetime as dt
+        
+        calendar = CalendarService()
+        if not calendar.authenticate():
+            raise HTTPException(status_code=401, detail="Calendar authentication failed")
+        
+        initial_datetime = dt.fromisoformat(request.initial_time)
+        result = calendar.schedule_followup(request.campaign_name, initial_datetime, request.followup_days)
+        
+        if result['success']:
+            return {
+                "status": "scheduled",
+                "campaign": request.campaign_name,
+                "followup_date": initial_datetime.isoformat(),
+                "followup_days": request.followup_days,
+                "event_id": result.get('event_id'),
+                "message": f"✅ Follow-up scheduled for {request.followup_days} days later"
+            }
+        else:
+            raise HTTPException(status_code=400, detail=result['error'])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/calendar/available-slots")
+async def get_available_slots(start_date: str, num_days: int = 7):
+    """Get available calendar slots for scheduling"""
+    try:
+        from services.calendar_service import CalendarService
+        from datetime import datetime as dt
+        
+        calendar = CalendarService()
+        if not calendar.authenticate():
+            raise HTTPException(status_code=401, detail="Calendar authentication failed")
+        
+        start_datetime = dt.fromisoformat(start_date)
+        slots = calendar.get_available_slots(start_datetime, num_days)
+        
+        return {
+            "available_slots": slots,
+            "total_slots": len(slots),
+            "period": f"{num_days} days starting {start_date}"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/calendar/auth-status")
+async def get_calendar_auth_status():
+    """Check Calendar authentication status"""
+    try:
+        from services.calendar_service import CalendarService
+        
+        calendar = CalendarService()
+        authenticated = calendar.authenticate()
+        
+        return {
+            "authenticated": authenticated,
+            "service": "Google Calendar",
+            "status": "✅ Connected" if authenticated else "❌ Not connected"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============ LINKEDIN ENDPOINTS ============
+@router.post("/linkedin/get-members")
+async def get_company_members(request: GetMembersRequest):
+    """Get members from a specific company and department"""
+    try:
+        from services.linkedin_service import LinkedInService
+        
+        linkedin = LinkedInService()
+        members = await linkedin.get_company_members(request.company_name, request.department, request.limit)
+        
+        return {
+            "company": request.company_name,
+            "department": request.department or "All",
+            "total_found": len(members),
+            "members": members,
+            "success": True
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/linkedin/generate-messages")
+async def generate_outreach_messages(request: GenerateMessagesRequest):
+    """Generate personalized LinkedIn message drafts for company members"""
+    try:
+        from services.linkedin_service import LinkedInService
+        
+        if not request.company_name:
+            raise ValueError("company_name is required")
+        
+        linkedin = LinkedInService()
+        batch = linkedin.generate_outreach_batch(
+            company_name=request.company_name,
+            department=request.department,
+            campaign_topic=request.campaign_topic,
+            tone=request.tone,
+            limit=request.limit
+        )
+        
+        return batch
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/linkedin/generate-single-message")
+async def generate_single_message(request: GenerateSingleMessageRequest):
+    """Generate a single personalized message"""
+    try:
+        from services.linkedin_service import LinkedInService
+        
+        linkedin = LinkedInService()
+        member = {
+            "name": request.member_name,
+            "title": request.member_title,
+            "headline": ""
+        }
+        
+        result = linkedin.generate_message_draft(
+            member=member,
+            campaign_topic=request.campaign_topic,
+            company_name=request.company_name,
+            tone=request.tone
+        )
+        
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

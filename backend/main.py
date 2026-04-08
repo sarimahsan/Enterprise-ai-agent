@@ -4,7 +4,7 @@ from api.routes import router
 
 app = FastAPI(
     title="FlowForge API",
-    description="Multi-agent enterprise workflow system",
+    description="Multi-agent enterprise sales outreach system",
     version="1.0.0"
 )
 
