@@ -3,7 +3,7 @@
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
-from google.api_python_client import discovery
+from googleapiclient.discovery import build
 from datetime import datetime, timedelta
 import json
 import os
@@ -28,7 +28,7 @@ class CalendarService:
                 SCOPES
             )
             self.credentials = flow.run_local_server(port=0)
-            self.service = discovery.build('calendar', 'v3', credentials=self.credentials)
+            self.service = build('calendar', 'v3', credentials=self.credentials)
             return True
         except Exception as e:
             print(f"Calendar auth failed: {e}")

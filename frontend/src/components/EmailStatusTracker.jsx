@@ -1,45 +1,35 @@
 export default function EmailStatusTracker({ stats }) {
   return (
-    <div style={styles.container}>
-      <h2 style={styles.title}>📊 Email Sending Statistics</h2>
+    <div className="bg-black/40 backdrop-blur-sm border border-white/10 rounded-lg p-4 md:p-6 shadow-lg">
+      <h2 className="text-lg md:text-xl font-bold text-white mb-4">📊 Email Sending Statistics</h2>
       
-      <div style={styles.gridContainer}>
-        <div style={styles.statCard}>
-          <div style={styles.statIcon}>📤</div>
-          <div style={styles.statNumber}>{stats.total_sent}</div>
-          <div style={styles.statLabel}>Total Sent</div>
-        </div>
-
-        <div style={styles.statCard}>
-          <div style={styles.statIcon}>⏳</div>
-          <div style={styles.statNumber}>{stats.pending}</div>
-          <div style={styles.statLabel}>Pending</div>
-        </div>
-
-        <div style={styles.statCard}>
-          <div style={styles.statIcon}>❌</div>
-          <div style={styles.statNumber}>{stats.failed}</div>
-          <div style={styles.statLabel}>Failed</div>
-        </div>
-
-        <div style={styles.statCard}>
-          <div style={styles.statIcon}>✅</div>
-          <div style={styles.statNumber}>{stats.success_rate.toFixed(1)}%</div>
-          <div style={styles.statLabel}>Success Rate</div>
-        </div>
+      {/* Stats Grid */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
+        {[
+          { icon: "📤", value: stats.total_sent, label: "Total Sent" },
+          { icon: "⏳", value: stats.pending, label: "Pending" },
+          { icon: "❌", value: stats.failed, label: "Failed" },
+          { icon: "✅", value: `${stats.success_rate.toFixed(1)}%`, label: "Success Rate" },
+        ].map((stat, i) => (
+          <div key={i} className="bg-white/5 border border-white/10 rounded-lg p-3 md:p-5 text-center flex flex-col items-center gap-2 backdrop-blur-sm hover:bg-white/10 transition-all">
+            <div className="text-xl md:text-2xl">{stat.icon}</div>
+            <div className="text-lg md:text-2xl font-bold text-white">{stat.value}</div>
+            <div className="text-xs md:text-sm text-gray-400 font-medium">{stat.label}</div>
+          </div>
+        ))}
       </div>
 
-      {/* Recent Failures */}
+      {/* Failed Emails Section */}
       {stats.failed_emails.length > 0 && (
-        <div style={styles.failedSection}>
-          <h3 style={styles.sectionTitle}>⚠️ Failed Emails</h3>
-          <div style={styles.emailList}>
+        <div className="mt-6 pt-6 border-t border-white/10">
+          <h3 className="text-sm md:text-base font-semibold text-red-500 mb-3">⚠️ Failed Emails (Last 3)</h3>
+          <div className="flex flex-col gap-2.5">
             {stats.failed_emails.slice(0, 3).map((email, idx) => (
-              <div key={idx} style={styles.emailItem}>
-                <span style={styles.iconFailed}>❌</span>
-                <div style={styles.emailInfo}>
-                  <div style={styles.emailAddr}>{email.to_email}</div>
-                  <div style={styles.emailError}>{email.error}</div>
+              <div key={idx} className="flex items-start gap-3 p-3 bg-red-500/10 border border-red-500/20 rounded-lg backdrop-blur-sm">
+                <span className="text-lg mt-0.5">❌</span>
+                <div className="flex-1">
+                  <div className="text-sm md:text-base text-slate-300 font-medium">{email.to_email}</div>
+                  <div className="text-xs md:text-sm text-red-400 mt-0.5">{email.error}</div>
                 </div>
               </div>
             ))}
@@ -48,109 +38,4 @@ export default function EmailStatusTracker({ stats }) {
       )}
     </div>
   )
-}
-
-const styles = {
-  container: {
-    backgroundColor: "rgba(30, 30, 30, 0.4)",
-    backdropFilter: "blur(10px)",
-    border: "1px solid rgba(255, 255, 255, 0.08)",
-    borderRadius: "12px",
-    padding: "clamp(12px, 3vw, 24px)",
-    boxShadow: "0 8px 32px rgba(0, 0, 0, 0.3)",
-  },
-
-  title: {
-    fontSize: "clamp(1rem, 2.5vw, 1.2rem)",
-    fontWeight: "700",
-    color: "#ffffff",
-    marginBottom: "clamp(12px, 2vw, 20px)",
-  },
-
-  gridContainer: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
-    gap: "clamp(8px, 1.5vw, 16px)",
-    marginBottom: "clamp(12px, 2vw, 24px)",
-  },
-
-  statCard: {
-    backgroundColor: "rgba(255, 255, 255, 0.05)",
-    border: "1px solid rgba(255, 255, 255, 0.1)",
-    borderRadius: "8px",
-    padding: "clamp(12px, 2vw, 20px)",
-    textAlign: "center",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: "clamp(6px, 1vw, 10px)",
-    backdropFilter: "blur(5px)",
-    transition: "all 0.3s ease",
-  },
-
-  statIcon: {
-    fontSize: "clamp(1.5rem, 3vw, 2rem)",
-  },
-
-  statNumber: {
-    fontSize: "clamp(1.3rem, 3.5vw, 1.8rem)",
-    fontWeight: "700",
-    color: "#ffffff",
-  },
-
-  statLabel: {
-    fontSize: "0.85rem",
-    color: "#a0a0a0",
-    fontWeight: "500",
-  },
-
-  failedSection: {
-    marginTop: "20px",
-    paddingTop: "20px",
-    borderTop: "1px solid rgba(255, 255, 255, 0.08)",
-  },
-
-  sectionTitle: {
-    fontSize: "0.95rem",
-    fontWeight: "600",
-    color: "#ff6b6b",
-    marginBottom: "12px",
-  },
-
-  emailList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
-  },
-
-  emailItem: {
-    display: "flex",
-    alignItems: "center",
-    gap: "12px",
-    padding: "12px",
-    backgroundColor: "rgba(255, 107, 107, 0.1)",
-    borderRadius: "6px",
-    border: "1px solid rgba(255, 107, 107, 0.2)",
-    backdropFilter: "blur(5px)",
-  },
-
-  iconFailed: {
-    fontSize: "1.2rem",
-  },
-
-  emailInfo: {
-    flex: 1,
-  },
-
-  emailAddr: {
-    fontSize: "0.9rem",
-    color: "#cbd5e1",
-    fontWeight: "500",
-  },
-
-  emailError: {
-    fontSize: "0.8rem",
-    color: "#ff6b6b",
-    marginTop: "2px",
-  },
 }

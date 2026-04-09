@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import {
   Mail, BarChart3, Zap, Calendar, Globe, Activity,
   CheckCircle, AlertCircle, RefreshCw, Send, TrendingUp,
-  Target, Settings, LogOut, Menu, X
+  Target, Settings, LogOut, Menu, X, Star, Database
 } from "lucide-react"
 import EmailManagementPanel from "./components/EmailManagementPanel"
 import EmailStatusTracker from "./components/EmailStatusTracker"
@@ -13,7 +13,11 @@ import EmailVariants from "./components/EmailVariants"
 import CampaignAnalytics from "./components/CampaignAnalytics"
 import CalendarScheduler from "./components/CalendarScheduler"
 import LinkedInOutreach from "./components/LinkedInOutreach"
-import "./App.css"
+import LeadScoringDashboard from "./components/LeadScoringDashboard"
+import EmailQualityReview from "./components/EmailQualityReview"
+import ObjectionHandler from "./components/ObjectionHandler"
+import ExportPanel from "./components/ExportPanel"
+// import "./index.css"
 
 const API_URL = "http://localhost:8000/api"
 
@@ -26,6 +30,7 @@ export default function App() {
   // Form State
   const [company, setCompany] = useState("")
   const [goal, setGoal] = useState("")
+  const [campaignId, setCampaignId] = useState(null)
 
   // API Response Data
   const [analysis, setAnalysis] = useState(null)
@@ -71,6 +76,17 @@ export default function App() {
     }
   }
 
+  // Handle Start Campaign from Lead Scoring Dashboard
+  const handleStartCampaign = (companyName) => {
+    setCompany(companyName)
+    setGoal("") // Reset goal so user can enter it
+    setActiveTab("dashboard")
+    // Focus will be on the goal input after tab switch
+    setTimeout(() => {
+      document.querySelector('[placeholder="e.g., Launch AI training, B2B outreach..."]')?.focus()
+    }, 100)
+  }
+
   // Run Campaign Generation Agent
   const runAgent = async () => {
     if (!company.trim() || !goal.trim()) {
@@ -82,28 +98,73 @@ export default function App() {
     setLoading(true)
 
     try {
-      const response = await fetch(`${API_URL}/run`, {
+      // Step 1: Generate campaign with pipeline
+      const generateResponse = await fetch(`${API_URL}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ company, goal })
       })
 
-      if (!response.ok) {
-        throw new Error("Campaign generation failed")
+      if (!generateResponse.ok) {
+        const errorData = await generateResponse.json().catch(() => ({}))
+        const errorMsg = errorData.detail || errorData.message || "Campaign generation failed"
+        throw new Error(errorMsg)
       }
 
-      const data = await response.json()
-      setLogs(data.logs || [])
-      setAnalysis(data.analysis || null)
-      setEmails(data.emails || null)
-      setEmailTemplates(data.email_templates || null)
-      setFollowUpSchedule(data.follow_up_schedule || null)
-      setVariants(data.variants || null)
-      setAnalytics(data.analytics || null)
+      const pipelineData = await generateResponse.json()
+      setLogs(pipelineData.logs || [])
+      setAnalysis(pipelineData.analysis || null)
+      setEmails(pipelineData.emails || null)
+      setEmailTemplates(pipelineData.email_templates || null)
+      setFollowUpSchedule(pipelineData.follow_up_schedule || null)
+      setVariants(pipelineData.variants || null)
+      setAnalytics(pipelineData.analytics || null)
+
+      // Step 2: Save campaign to database
+      const saveResponse = await fetch(`${API_URL}/campaigns/create-from-pipeline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company: company,
+          goal: goal,
+          analysis: pipelineData.analysis || {},
+          emails: pipelineData.emails || [],
+          variants: pipelineData.variants || [],
+          follow_up_schedule: pipelineData.follow_up_schedule || {}
+        })
+      })
+
+      if (!saveResponse.ok) {
+        const errorData = await saveResponse.json().catch(() => ({}))
+        console.error("Save campaign response error:", errorData)
+        
+        let errorMsg = "Failed to save campaign"
+        if (errorData.detail) {
+          errorMsg = errorData.detail
+        } else if (errorData.errors) {
+          errorMsg = `Validation error: ${errorData.errors.map(e => `${e.loc.join('.')}: ${e.msg}`).join(', ')}`
+        } else if (errorData.message) {
+          errorMsg = errorData.message
+        }
+        throw new Error(errorMsg)
+      }
+
+      const campaignResult = await saveResponse.json()
+      setCampaignId(campaignResult.campaign_id)
+      setLogs(prev => [...prev, `✅ Campaign saved (ID: ${campaignResult.campaign_id})`])
+      
       setActiveTab("campaign")
     } catch (err) {
-      setLogs([`Error: ${err.message}`])
-      alert("Failed to generate campaign: " + err.message)
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      console.error("Full campaign generation error:", err)
+      console.error("Error details:", {
+        message: errorMessage,
+        stack: err instanceof Error ? err.stack : 'N/A',
+        company,
+        goal,
+      })
+      setLogs(prev => [...prev, `❌ Error: ${errorMessage}`])
+      alert("Failed to generate campaign:\n\n" + errorMessage)
     } finally {
       setLoading(false)
     }
@@ -116,85 +177,109 @@ export default function App() {
         setActiveTab(id)
         setMenuOpen(false)
       }}
-      className={`tab-btn ${activeTab === id ? "active" : ""}`}
+      className={`flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all ${
+        activeTab === id
+          ? "bg-cyan-500/20 border border-cyan-400 text-cyan-400"
+          : "text-slate-400 hover:text-white hover:bg-white/5"
+      }`}
     >
       <Icon size={20} />
-      <span>{label}</span>
-      {badge > 0 && <span className="badge">{badge}</span>}
+      <span className="hidden md:inline">{label}</span>
+      {badge > 0 && (
+        <span className="ml-auto bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
+          {badge}
+        </span>
+      )}
     </button>
   )
 
   return (
-    <div className="app">
+    <div className="w-full h-screen flex flex-col bg-gradient-to-br from-slate-950 to-slate-900 text-white">
       {/* Header */}
-      <header className="header">
-        <div className="header-left">
-          <div className="logo">
-            <div className="logo-icon">
-              <Zap size={24} />
+      <header className="bg-slate-900/80 border-b border-slate-700/50 backdrop-blur-sm sticky top-0 z-50">
+        <div className="px-4 md:px-6 py-3 flex items-center justify-between gap-4">
+          {/* Logo */}
+          <div className="flex items-center gap-3 flex-shrink-0">
+            <div className="w-10 h-10 bg-gradient-to-br from-cyan-500 to-purple-600 rounded-lg flex items-center justify-center">
+              <Zap size={24} className="text-white" />
             </div>
-            <div className="logo-text">
-              <h1>FlowForge AI</h1>
-              <p>Enterprise Campaign Automation</p>
+            <div>
+              <h1 className="text-lg font-bold text-white">FlowForge AI</h1>
+              <p className="text-xs text-slate-400">Campaign Automation</p>
             </div>
           </div>
-        </div>
 
-        <nav className={`nav ${menuOpen ? "open" : ""}`}>
-          <TabButton id="dashboard" label="Dashboard" icon={Zap} />
-          <TabButton id="campaign" label="Campaign" icon={Target} />
-          <TabButton id="emails" label="Emails" icon={Mail} badge={emailStats?.total_sent || 0} />
-          <TabButton id="analytics" label="Analytics" icon={BarChart3} />
-        </nav>
+          {/* Navigation */}
+          <nav className={`fixed md:relative left-0 top-16 md:top-0 w-full md:w-auto bg-slate-900 md:bg-transparent border-b md:border-0 border-slate-700 ${
+            menuOpen ? "block" : "hidden md:flex"
+          } flex-col md:flex-row gap-2 p-4 md:p-0 md:gap-1`}>
+            <TabButton id="dashboard" label="Dashboard" icon={Zap} />
+            <TabButton id="campaign" label="Campaign" icon={Target} />
+            <TabButton id="leads" label="Leads" icon={Database} />
+            <TabButton id="quality" label="Quality" icon={Star} />
+            <TabButton id="emails" label="Emails" icon={Mail} badge={emailStats?.total_sent || 0} />
+            <TabButton id="analytics" label="Analytics" icon={BarChart3} />
+          </nav>
 
-        <div className="header-right">
-          <div className={`status-badge ${gmailStatus?.is_authenticated ? "connected" : "disconnected"}`}>
-            {gmailStatus?.is_authenticated ? (
-              <>
-                <CheckCircle size={16} />
-                <span>Gmail Connected</span>
-              </>
-            ) : (
-              <>
-                <AlertCircle size={16} />
-                <span>Gmail Offline</span>
-              </>
-            )}
+          {/* Right Side */}
+          <div className="flex items-center gap-3 flex-shrink-0">
+            {/* Gmail Status */}
+            <div
+              className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold ${
+                gmailStatus?.is_authenticated
+                  ? "bg-green-500/20 border border-green-500/30 text-green-400"
+                  : "bg-red-500/20 border border-red-500/30 text-red-400"
+              }`}
+            >
+              {gmailStatus?.is_authenticated ? (
+                <>
+                  <CheckCircle size={14} />
+                  <span>Gmail Connected</span>
+                </>
+              ) : (
+                <>
+                  <AlertCircle size={14} />
+                  <span>Gmail Offline</span>
+                </>
+              )}
+            </div>
+
+            {/* Refresh Button */}
+            <button
+              onClick={checkGmailStatus}
+              title="Refresh Gmail status"
+              className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+            >
+              <RefreshCw size={18} className="text-slate-400 hover:text-cyan-400" />
+            </button>
+
+            {/* Mobile Menu Toggle */}
+            <button
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="md:hidden p-2 hover:bg-white/10 rounded-lg"
+            >
+              {menuOpen ? <X size={24} /> : <Menu size={24} />}
+            </button>
           </div>
-
-          <button
-            className="icon-btn"
-            onClick={checkGmailStatus}
-            title="Refresh Gmail status"
-          >
-            <RefreshCw size={18} />
-          </button>
-
-          <button
-            className="menu-toggle"
-            onClick={() => setMenuOpen(!menuOpen)}
-          >
-            {menuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="main-content">
+      <main className="flex-1 overflow-y-auto p-4 md:p-6">
         {/* Dashboard Tab */}
         {activeTab === "dashboard" && (
-          <div className="dashboard-layout">
-            <div className="section">
-              <div className="section-header">
-                <Zap size={28} />
+          <div className="space-y-6">
+            <div>
+              <div className="flex items-start gap-4 mb-6">
+                <Zap size={28} className="text-cyan-400 flex-shrink-0 mt-1" />
                 <div>
-                  <h2>Campaign Generator</h2>
-                  <p>Create intelligent outreach campaigns with AI</p>
+                  <h2 className="text-2xl md:text-3xl font-bold text-white">Campaign Generator</h2>
+                  <p className="text-slate-400 mt-1">Create intelligent outreach campaigns with AI</p>
                 </div>
               </div>
 
-              <div className="dashboard-grid">
-                <div className="card generator-card">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
                   <CampaignGenerator
                     company={company}
                     goal={goal}
@@ -205,10 +290,10 @@ export default function App() {
                   />
                 </div>
 
-                <div className="card activity-card">
-                  <div className="card-header">
-                    <Activity size={20} />
-                    <h3>Agent Activity</h3>
+                <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
+                  <div className="flex items-center gap-3 mb-4 pb-4 border-b border-slate-700">
+                    <Activity size={20} className="text-cyan-400" />
+                    <h3 className="text-lg font-bold text-white">Agent Activity</h3>
                   </div>
                   <AgentActivityLog logs={logs} loading={loading} />
                 </div>
@@ -219,72 +304,136 @@ export default function App() {
 
         {/* Campaign Tab */}
         {activeTab === "campaign" && (
-          <div className="campaign-layout">
-            <div className="section-header">
-              <Target size={28} />
+          <div className="space-y-6">
+            <div className="flex items-start gap-4">
+              <Target size={28} className="text-purple-400 flex-shrink-0 mt-1" />
               <div>
-                <h2>Campaign Overview</h2>
-                <p>{company || "No Company"} — {goal || "No Goal Set"}</p>
+                <h2 className="text-2xl md:text-3xl font-bold text-white">Campaign Overview</h2>
+                <p className="text-slate-400 mt-1">{company || "No Company"} — {goal || "No Goal Set"}</p>
               </div>
             </div>
 
             {analysis ? (
-              <>
-                <div className="grid-2">
-                  <div className="card">
-                    <IntelligenceCards analysis={analysis} />
-                  </div>
-                  <div className="card">
-                    {analytics ? <CampaignAnalytics analytics={analytics} /> : <div className="placeholder">Analytics loading...</div>}
-                  </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
+                  <IntelligenceCards analysis={analysis} />
+                </div>
+                <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
+                  {analytics ? <CampaignAnalytics analytics={analytics} /> : <div className="text-slate-400 text-center py-8">Analytics loading...</div>}
                 </div>
 
-                <div className="grid-2">
-                  <div className="card">
-                    <CalendarScheduler campaign={{ name: `${company} Campaign`, company, analysis }} />
-                  </div>
-                  <div className="card">
-                    <LinkedInOutreach company={company} goal={goal} analysis={analysis} />
-                  </div>
+                <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
+                  <CalendarScheduler campaign={{ name: `${company} Campaign`, company, analysis }} />
                 </div>
-              </>
+                <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
+                  <LinkedInOutreach company={company} goal={goal} analysis={analysis} />
+                </div>
+              </div>
             ) : (
-              <div className="empty-state">
-                <Zap size={48} />
-                <h3>No Campaign Generated Yet</h3>
-                <p>Generate a campaign from the Dashboard tab to see insights</p>
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <Zap size={48} className="text-slate-600 mb-4" />
+                <h3 className="text-xl font-bold text-white mb-2">No Campaign Generated Yet</h3>
+                <p className="text-slate-400">Generate a campaign from the Dashboard tab to see insights</p>
               </div>
             )}
           </div>
         )}
 
-        {/* Emails Tab */}
-        {activeTab === "emails" && (
-          <div className="emails-layout">
-            <div className="section-header">
-              <Mail size={28} />
+        {/* Leads Tab */}
+        {activeTab === "leads" && (
+          <div className="space-y-6">
+            <div className="flex items-start gap-4">
+              <Database size={28} className="text-emerald-400 flex-shrink-0 mt-1" />
               <div>
-                <h2>Email Management</h2>
-                <p>Create, send, and track your campaigns</p>
+                <h2 className="text-2xl md:text-3xl font-bold text-white">Lead Scoring Dashboard</h2>
+                <p className="text-slate-400 mt-1">View all prospects ranked by opportunity and urgency</p>
               </div>
             </div>
 
-            <div className="card">
-              <div className="card-header">
-                <BarChart3 size={20} />
-                <h3>Performance Analytics</h3>
+            <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
+              <LeadScoringDashboard onStartCampaign={handleStartCampaign} />
+            </div>
+          </div>
+        )}
+
+        {/* Quality Tab */}
+        {activeTab === "quality" && (
+          <div className="space-y-6">
+            <div className="flex items-start gap-4">
+              <Star size={28} className="text-amber-400 flex-shrink-0 mt-1" />
+              <div>
+                <h2 className="text-2xl md:text-3xl font-bold text-white">Email Quality & Preparation</h2>
+                <p className="text-slate-400 mt-1">Review email scores, objections, and export intelligence</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
+                <div className="flex items-center gap-3 mb-4 pb-4 border-b border-slate-700">
+                  <CheckCircle size={20} className="text-cyan-400" />
+                  <h3 className="text-lg font-bold text-white">Email Quality Review</h3>
+                </div>
+                {campaignId ? (
+                  <EmailQualityReview campaignId={campaignId} emails={emails} company={company} />
+                ) : (
+                  <div className="text-slate-400 text-center py-8">Generate a campaign to review email quality</div>
+                )}
+              </div>
+
+              <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
+                <div className="flex items-center gap-3 mb-4 pb-4 border-b border-slate-700">
+                  <AlertCircle size={20} className="text-red-400" />
+                  <h3 className="text-lg font-bold text-white">Objection Handler</h3>
+                </div>
+                {campaignId ? (
+                  <ObjectionHandler campaignId={campaignId} company={company} goal={goal} analysis={analysis} />
+                ) : (
+                  <div className="text-slate-400 text-center py-8">Generate a campaign to see objections</div>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
+              <div className="flex items-center gap-3 mb-4 pb-4 border-b border-slate-700">
+                <Send size={20} className="text-purple-400" />
+                <h3 className="text-lg font-bold text-white">Export Intelligence Report</h3>
+              </div>
+              {campaignId ? (
+                <ExportPanel campaignId={campaignId} campaignData={{ company, goal, analysis, emails }} />
+              ) : (
+                <div className="text-slate-400 text-center py-8">Generate a campaign to enable exports</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Emails Tab */}
+        {activeTab === "emails" && (
+          <div className="space-y-6">
+            <div className="flex items-start gap-4">
+              <Mail size={28} className="text-blue-400 flex-shrink-0 mt-1" />
+              <div>
+                <h2 className="text-2xl md:text-3xl font-bold text-white">Email Management</h2>
+                <p className="text-slate-400 mt-1">Create, send, and track your campaigns</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
+              <div className="flex items-center gap-3 mb-4 pb-4 border-b border-slate-700">
+                <BarChart3 size={20} className="text-emerald-400" />
+                <h3 className="text-lg font-bold text-white">Email Stats</h3>
               </div>
               {emailStats ? (
                 <EmailStatusTracker stats={emailStats} />
               ) : (
-                <div className="placeholder">Loading stats...</div>
+                <div className="text-slate-400 text-center py-8">Loading stats...</div>
               )}
             </div>
 
-            <div className="card">
-              <div className="card-header">
-                <Send size={20} />
-                <h3>Email Creator</h3>
+            <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
+              <div className="flex items-center gap-3 mb-4 pb-4 border-b border-slate-700">
+                <Send size={20} className="text-pink-400" />
+                <h3 className="text-lg font-bold text-white">Email Creator</h3>
               </div>
               {emailTemplates ? (
                 <EmailManagementPanel
@@ -294,19 +443,19 @@ export default function App() {
                   onStatsUpdated={loadEmailStats}
                 />
               ) : (
-                <div className="placeholder">No templates available</div>
+                <div className="text-slate-400 text-center py-8">No templates available</div>
               )}
             </div>
 
-            <div className="card">
-              <div className="card-header">
-                <TrendingUp size={20} />
-                <h3>A/B Testing</h3>
+            <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
+              <div className="flex items-center gap-3 mb-4 pb-4 border-b border-slate-700">
+                <TrendingUp size={20} className="text-orange-400" />
+                <h3 className="text-lg font-bold text-white">A/B Testing</h3>
               </div>
               {variants ? (
                 <EmailVariants variants={variants} emails={emails} />
               ) : (
-                <div className="placeholder">No variants available</div>
+                <div className="text-slate-400 text-center py-8">No variants available</div>
               )}
             </div>
           </div>
@@ -314,59 +463,37 @@ export default function App() {
 
         {/* Analytics Tab */}
         {activeTab === "analytics" && (
-          <div className="analytics-layout">
-            <div className="section-header">
-              <BarChart3 size={28} />
+          <div className="space-y-6">
+            <div className="flex items-start gap-4">
+              <BarChart3 size={28} className="text-yellow-400 flex-shrink-0 mt-1" />
               <div>
-                <h2>Analytics Dashboard</h2>
-                <p>Campaign performance and insights</p>
+                <h2 className="text-2xl md:text-3xl font-bold text-white">Analytics Dashboard</h2>
+                <p className="text-slate-400 mt-1">Campaign performance and insights</p>
               </div>
             </div>
 
-            <div className="grid-2">
-              <div className="card stat-card">
-                <div className="stat-icon">
-                  <Mail size={24} />
-                </div>
-                <div className="stat-content">
-                  <p className="stat-label">Total Emails Sent</p>
-                  <p className="stat-value">{emailStats?.total_sent || 0}</p>
-                </div>
-              </div>
-
-              <div className="card stat-card">
-                <div className="stat-icon success">
-                  <CheckCircle size={24} />
-                </div>
-                <div className="stat-content">
-                  <p className="stat-label">Open Rate</p>
-                  <p className="stat-value">{emailStats?.open_rate ? `${emailStats.open_rate}%` : "N/A"}</p>
-                </div>
-              </div>
-
-              <div className="card stat-card">
-                <div className="stat-icon">
-                  <TrendingUp size={24} />
-                </div>
-                <div className="stat-content">
-                  <p className="stat-label">Click Rate</p>
-                  <p className="stat-value">{emailStats?.click_rate ? `${emailStats.click_rate}%` : "N/A"}</p>
-                </div>
-              </div>
-
-              <div className="card stat-card">
-                <div className="stat-icon">
-                  <Target size={24} />
-                </div>
-                <div className="stat-content">
-                  <p className="stat-label">Conversion Rate</p>
-                  <p className="stat-value">{emailStats?.conversion_rate ? `${emailStats.conversion_rate}%` : "N/A"}</p>
-                </div>
-              </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[
+                { icon: Mail, label: "Total Emails Sent", value: emailStats?.total_sent || 0, color: "bg-blue-500/20" },
+                { icon: CheckCircle, label: "Open Rate", value: emailStats?.open_rate ? `${emailStats.open_rate}%` : "N/A", color: "bg-green-500/20" },
+                { icon: TrendingUp, label: "Click Rate", value: emailStats?.click_rate ? `${emailStats.click_rate}%` : "N/A", color: "bg-purple-500/20" },
+                { icon: Target, label: "Conversion Rate", value: emailStats?.conversion_rate ? `${emailStats.conversion_rate}%` : "N/A", color: "bg-orange-500/20" },
+              ].map((stat, i) => {
+                const Icon = stat.icon
+                return (
+                  <div key={i} className={`${stat.color} border border-slate-700/50 rounded-lg p-4 flex items-start gap-3`}>
+                    <Icon size={24} className="mt-1 flex-shrink-0" />
+                    <div>
+                      <p className="text-xs text-slate-400 font-medium">{stat.label}</p>
+                      <p className="text-2xl font-bold text-white mt-1">{stat.value}</p>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
 
             {analytics && (
-              <div className="card">
+              <div className="bg-slate-800/40 border border-slate-700/50 rounded-lg p-4">
                 <CampaignAnalytics analytics={analytics} />
               </div>
             )}

@@ -6,12 +6,20 @@ from core.config import settings
 from services.gmail_service import get_gmail_service
 import json
 
-llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
-    api_key=settings.GROQ_API_KEY
-).bind(response_format={"type": "json_object"})
+_llm = None
+
+def get_llm():
+    """Lazy load LLM to avoid initialization errors at import time"""
+    global _llm
+    if _llm is None:
+        _llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            api_key=settings.GROQ_API_KEY
+        ).bind(response_format={"type": "json_object"})
+    return _llm
 
 def generate_email_templates(company: str, analysis: dict, emails: dict) -> dict:
+    llm = get_llm()
     """
     Generate professional HTML email templates for multi-channel distribution.
     Takes writer agent emails and creates proper templates.

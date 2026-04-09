@@ -10,50 +10,92 @@ from graph.workflow import pipeline, AgentState
 from services.email_channel import generate_email_templates, send_campaign_email, create_follow_up_schedule
 from services.gmail_service_pro import get_gmail_service
 from datetime import datetime
+import os
 
 router = APIRouter()
+
+# ============ HEALTH CHECK ENDPOINTS ============
+@router.get("/health")
+async def health_check():
+    """Check API health and configuration status"""
+    return {
+        "status": "OK",
+        "service": "FlowForge AI Sales Agent",
+        "version": "1.0.0",
+        "endpoints_available": [
+            "POST /api/run",
+            "POST /api/campaigns/create-from-pipeline",
+            "GET /api/campaigns/validate-request",
+            "POST /api/send-email",
+            "GET /api/quality/score-email-sequence"
+        ]
+    }
+
+@router.get("/config-status")
+async def config_status():
+    """Check configuration and environment setup"""
+    config_items = {
+        "groq_api_key": "✅" if os.getenv("GROQ_API_KEY") else "❌ Missing",
+        "google_client_id": "✅" if os.getenv("GOOGLE_CLIENT_ID") else "❌ Missing",
+        "google_client_secret": "✅" if os.getenv("GOOGLE_CLIENT_SECRET") else "❌ Missing",
+        "database": "✅" if os.path.exists("db.sqlite") else "⏳ Will be created on startup",
+        "tavily_api_key": "✅" if os.getenv("TAVILY_API_KEY") else "⚠️  Optional (uses LLM fallback)",
+    }
+    
+    all_ok = all(v.startswith("✅") for v in config_items.values())
+    
+    return {
+        "configuration": config_items,
+        "ready_to_use": all_ok,
+        "missing_items": [k for k, v in config_items.items() if "❌" in v]
+    }
 
 # ============ CAMPAIGN ENDPOINTS ============
 @router.post("/run", response_model=AgentResponse)
 async def run_agent(request: GoalRequest):
     """Run the AI agent campaign generator"""
-    result = pipeline.invoke(AgentState(
-        company=request.company,
-        goal=request.goal,
-        tasks=[],
-        research={},
-        analysis={},
-        emails={},
-        email_templates={},
-        variants={},
-        logs=[],
-        analytics={},
-        follow_up_schedule={}
-    ))
-    
-    # Generate professional email templates
-    email_templates = generate_email_templates(
-        request.company,
-        result["analysis"],
-        result["emails"]
-    )
-    
-    # Create follow-up schedule
-    follow_up_schedule = create_follow_up_schedule(
-        request.company,
-        result["analysis"].get("decision_maker", "Team")
-    )
-    
-    return AgentResponse(
-        emails=result["emails"],
-        email_templates=email_templates,
-        analysis=result["analysis"],
-        variants=result["variants"],
-        logs=result["logs"],
-        tasks=result["tasks"],
-        analytics=result["analytics"],
-        follow_up_schedule=follow_up_schedule
-    )
+    try:
+        result = pipeline.invoke(AgentState(
+            company=request.company,
+            goal=request.goal,
+            tasks=[],
+            research={},
+            analysis={},
+            emails={},
+            email_templates={},
+            variants={},
+            logs=[],
+            analytics={},
+            follow_up_schedule={}
+        ))
+        
+        # Generate professional email templates
+        email_templates = generate_email_templates(
+            request.company,
+            result["analysis"],
+            result["emails"]
+        )
+        
+        # Create follow-up schedule
+        follow_up_schedule = create_follow_up_schedule(
+            request.company,
+            result["analysis"].get("decision_maker", "Team")
+        )
+        
+        return AgentResponse(
+            emails=result["emails"],
+            email_templates=email_templates,
+            analysis=result["analysis"],
+            variants=result["variants"],
+            logs=result["logs"],
+            tasks=result["tasks"],
+            analytics=result["analytics"],
+            follow_up_schedule=follow_up_schedule
+        )
+    except Exception as e:
+        error_msg = f"Pipeline execution failed: {str(e)}"
+        print(f"❌ {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 # ============ EMAIL SENDING ENDPOINTS ============
 @router.post("/send-email", response_model=EmailSendResponse)

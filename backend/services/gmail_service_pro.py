@@ -158,7 +158,8 @@ class GmailService:
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.credentials_path, SCOPES
                 )
-                creds = flow.run_local_server(port=0)
+                # Use fixed port 8080 for OAuth2 redirect (configure this in Google Cloud Console)
+                creds = flow.run_local_server(port=8080, open_browser=True)
             
             # Save token for future use
             try:

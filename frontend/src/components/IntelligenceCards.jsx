@@ -7,68 +7,17 @@ export default function IntelligenceCards({ analysis }) {
   ]
 
   return (
-    <div style={styles.container}>
-      <h2 style={styles.title}>🧠 Intelligence Cards</h2>
-      <div style={styles.grid}>
+    <div className="bg-black/40 backdrop-blur-sm border border-white/10 rounded-lg p-6 shadow-lg">
+      <h2 className="text-xl font-bold text-slate-200 mb-4">🧠 Intelligence Cards</h2>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {cards.map((card, idx) => (
-          <div key={idx} style={styles.card}>
-            <div style={styles.cardIcon}>{card.icon}</div>
-            <div style={styles.cardLabel}>{card.title}</div>
-            <div style={styles.cardValue}>{card.value}</div>
+          <div key={idx} className="bg-slate-900 border border-slate-700 rounded-lg p-4 text-center">
+            <div className="text-3xl mb-2">{card.icon}</div>
+            <div className="text-xs font-semibold text-purple-400 uppercase mb-2">{card.title}</div>
+            <div className="text-sm text-slate-300 leading-relaxed line-clamp-3">{card.value}</div>
           </div>
         ))}
       </div>
     </div>
   )
-}
-
-const styles = {
-  container: {
-    backgroundColor: "rgba(30, 30, 30, 0.4)",
-    backdropFilter: "blur(10px)",
-    border: "1px solid rgba(255, 255, 255, 0.08)",
-    boxShadow: "0 8px 32px rgba(0, 0, 0, 0.3)",
-    borderRadius: "12px",
-    padding: "24px",
-  },
-
-  title: {
-    fontSize: "1.2rem",
-    fontWeight: "700",
-    color: "#e2e8f0",
-    marginBottom: "16px",
-  },
-
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(4, 1fr)",
-    gap: "16px",
-  },
-
-  card: {
-    backgroundColor: "#0f172a",
-    border: "1px solid #334155",
-    borderRadius: "8px",
-    padding: "16px",
-    textAlign: "center",
-  },
-
-  cardIcon: {
-    fontSize: "2rem",
-    marginBottom: "8px",
-  },
-
-  cardLabel: {
-    fontSize: "0.8rem",
-    fontWeight: "600",
-    color: "#a78bfa",
-    textTransform: "uppercase",
-    marginBottom: "8px",
-  },
-
-  cardValue: {
-    fontSize: "0.9rem",
-    color: "#cbd5e1",
-    lineHeight: "1.4",
-  },
 }
