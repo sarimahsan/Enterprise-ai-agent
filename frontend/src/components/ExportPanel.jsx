@@ -1,136 +1,165 @@
 import React, { useState } from 'react'
-import { Download, FileText, BookOpen, CheckCircle, AlertCircle } from 'lucide-react'
+import { Download, FileText, CheckCircle, AlertCircle, Loader } from 'lucide-react'
+import jsPDF from 'jspdf'
 
 const API_URL = 'http://localhost:8000/api'
 
 export const ExportPanel = ({ campaignId, campaignData }) => {
   const [exporting, setExporting] = useState(false)
   const [exportResult, setExportResult] = useState(null)
-  const [notionDatabaseId, setNotionDatabaseId] = useState('')
-  const [showNotionInput, setShowNotionInput] = useState(false)
 
-  const exportToNotion = async () => {
-    if (!notionDatabaseId.trim()) {
-      alert('Please enter your Notion Database ID')
-      return
-    }
-
+  const downloadCampaignPDF = async () => {
     try {
       setExporting(true)
-      const response = await fetch(`${API_URL}/export/to-notion`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          campaign_id: campaignId,
-          notion_database_id: notionDatabaseId,
-          include_emails: true,
-          include_objections: true
-        })
-      })
-
-      const data = await response.json()
       
-      if (response.ok) {
-        setExportResult({
-          type: 'notion',
-          success: true,
-          notionPageId: data.notion_page_id,
-          message: data.message
-        })
-        setShowNotionInput(false)
-      } else {
-        setExportResult({
-          type: 'notion',
-          success: false,
-          message: data.detail || 'Failed to export to Notion'
-        })
+      // Fetch campaign analytics for comprehensive data
+      const analyticsRes = await fetch(`${API_URL}/campaigns/${campaignId}/analytics`)
+      const analytics = await analyticsRes.json()
+
+      // Create PDF
+      const pdf = new jsPDF('p', 'mm', 'a4')
+      let yPosition = 15
+
+      // Helper function to add text
+      const addText = (text, size, bold = false, color = [0, 0, 0]) => {
+        pdf.setFontSize(size)
+        pdf.setFont('helvetica', bold ? 'bold' : 'normal')
+        pdf.setTextColor(color[0], color[1], color[2])
+        const maxWidth = 180
+        const splitText = pdf.splitTextToSize(text, maxWidth)
+        pdf.text(splitText, 15, yPosition)
+        yPosition += (splitText.length * size * 0.35) + 3
       }
-    } catch (error) {
-      console.error('Error exporting to Notion:', error)
-      setExportResult({
-        type: 'notion',
-        success: false,
-        message: error.message
-      })
-    } finally {
-      setExporting(false)
-    }
-  }
 
-  const exportToGoogleDocs = async () => {
-    try {
-      setExporting(true)
-      const response = await fetch(`${API_URL}/export/to-google-docs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          campaign_id: campaignId,
-          include_emails: true,
-          include_objections: true
-        })
-      })
-
-      const data = await response.json()
-
-      if (response.ok) {
-        setExportResult({
-          type: 'google_docs',
-          success: true,
-          docUrl: data.google_docs_url,
-          docId: data.google_doc_id,
-          message: data.message
-        })
-        // Open in new tab
-        window.open(data.google_docs_url, '_blank')
-      } else {
-        setExportResult({
-          type: 'google_docs',
-          success: false,
-          message: data.detail || 'Failed to export to Google Docs'
-        })
+      // Add page break if needed
+      const checkPageBreak = (spaceNeeded = 40) => {
+        if (yPosition + spaceNeeded > 270) {
+          pdf.addPage()
+          yPosition = 15
+        }
       }
-    } catch (error) {
-      console.error('Error exporting to Google Docs:', error)
-      setExportResult({
-        type: 'google_docs',
-        success: false,
-        message: error.message
+
+      // Title
+      addText(`Campaign Report: ${analytics.campaign_name || analyticsData.company || 'Campaign'}`, 20, true, [59, 130, 246])
+
+      // Metadata
+      checkPageBreak(30)
+      addText(`Company: ${analytics.company_name}`, 11, false)
+      addText(`Status: ${analytics.status}`, 11, false)
+      addText(`Created: ${new Date(analytics.created_at).toLocaleDateString()}`, 11, false)
+      addText(`Last Updated: ${new Date(analytics.updated_at).toLocaleDateString()}`, 11, false)
+
+      // ========== COMPANY PROFILE ==========
+      checkPageBreak(50)
+      addText('COMPANY PROFILE', 14, true, [34, 197, 94])
+      const company = analytics.company || {}
+      addText(`Industry: ${company.industry || 'N/A'}`, 10, false)
+      addText(`Company Size: ${company.size || 'N/A'}`, 10, false)
+      addText(`Location: ${company.location || 'N/A'}`, 10, false)
+      addText(`Decision Maker: ${company.decision_maker || 'N/A'}`, 10, false)
+      addText(`Opportunity Score: ${company.opportunity_score || 0}/100`, 10, false)
+      addText(`Fit Score: ${company.fit_score || 0}/100`, 10, false)
+      addText(`Urgency Level: ${company.urgency || 'N/A'}`, 10, false)
+
+      // ========== EMAIL CAMPAIGN OVERVIEW ==========
+      checkPageBreak(50)
+      addText('EMAIL CAMPAIGN OVERVIEW', 14, true, [34, 197, 94])
+      const emails = analytics.emails || {}
+      addText(`Total Emails Created: ${emails.total || 0}`, 10, false)
+      addText(`Drafted: ${emails.drafted || 0} | Sent: ${emails.sent || 0} | Opened: ${emails.opened || 0}`, 10, false)
+      addText(`Average Confidence Score: ${(emails.avg_confidence_score || 0).toFixed(1)}/100`, 10, false)
+      addText(`Average Personalization Score: ${(emails.avg_personalization_score || 0).toFixed(1)}/10`, 10, false)
+      addText(`Open Rate: ${emails.open_rate || 0}%`, 10, false)
+
+      // ========== EMAIL SEQUENCE DETAILS ==========
+      checkPageBreak(50)
+      addText('EMAIL SEQUENCE DETAILS', 14, true, [34, 197, 94])
+      const emailPerformance = analytics.email_performance || []
+      emailPerformance.forEach((email, idx) => {
+        checkPageBreak(25)
+        addText(`Email #${email.sequence || idx + 1}: ${email.subject}`, 11, true)
+        addText(`Status: ${email.status} | Confidence: ${email.confidence || 0} | Personalization: ${email.personalization || 0}`, 9, false)
       })
-    } finally {
-      setExporting(false)
-    }
-  }
 
-  const saveToDB = async () => {
-    try {
-      setExporting(true)
-      const response = await fetch(`${API_URL}/export/save-to-database`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(campaignData)
+      // ========== EMAIL QUALITY DISTRIBUTION ==========
+      checkPageBreak(40)
+      addText('QUALITY DISTRIBUTION', 14, true, [34, 197, 94])
+      const quality = analytics.quality_distribution || {}
+      addText(`Excellent: ${quality.excellent || 0}`, 10, false)
+      addText(`Good: ${quality.good || 0}`, 10, false)
+      addText(`Fair: ${quality.fair || 0}`, 10, false)
+      addText(`Poor: ${quality.poor || 0}`, 10, false)
+
+      // ========== CONVERSION FUNNEL ==========
+      checkPageBreak(50)
+      addText('CONVERSION FUNNEL ANALYSIS', 14, true, [34, 197, 94])
+      const funnel = analytics.funnel || []
+      funnel.forEach(stage => {
+        checkPageBreak(20)
+        addText(`${stage.stage}: ${stage.count} (${stage.percentage}%)`, 10, false)
       })
 
-      const data = await response.json()
+      // ========== OBJECTIONS & RESPONSES ==========
+      checkPageBreak(50)
+      addText('OBJECTIONS & RESPONSES', 14, true, [34, 197, 94])
+      const objections = analytics.objections || {}
+      addText(`Total Objections: ${objections.total || 0}`, 10, false)
+      addText(`Coverage: ${objections.covered_percentage || 0}%`, 10, false)
+      
+      const topObjections = objections.top_objections || []
+      topObjections.forEach((obj, idx) => {
+        checkPageBreak(25)
+        const objStr = typeof obj === 'string' ? obj : obj.objection || ''
+        const cleanObj = objStr.replace(/@\{|=|;\}/g, ' ').substring(0, 100)
+        addText(`${idx + 1}. ${cleanObj}...`, 9, false)
+      })
 
-      if (response.ok) {
-        setExportResult({
-          type: 'database',
-          success: true,
-          message: data.message
-        })
-      } else {
-        setExportResult({
-          type: 'database',
-          success: false,
-          message: data.detail || 'Failed to save to database'
-        })
-      }
-    } catch (error) {
-      console.error('Error saving to database:', error)
+      // ========== PERFORMANCE METRICS ==========
+      checkPageBreak(50)
+      addText('PERFORMANCE INDICATORS', 14, true, [34, 197, 94])
+      const performance = analytics.performance || {}
+      addText(`Email Quality: ${performance.email_quality || 0}/100`, 10, false)
+      addText(`Personalization Level: ${performance.personalization_level || 0}/10`, 10, false)
+      addText(`Engagement Potential: ${performance.engagement_potential || 0}%`, 10, false)
+      addText(`Objection Coverage: ${performance.objection_coverage || 0}%`, 10, false)
+      addText(`Follow-up Readiness: ${performance.follow_up_readiness || 0}`, 10, false)
+      addText(`Campaign Momentum: ${performance.campaign_momentum || 'N/A'}`, 10, false)
+
+      // ========== FOLLOW-UP SCHEDULE ==========
+      checkPageBreak(50)
+      addText('FOLLOW-UP SCHEDULE', 14, true, [34, 197, 94])
+      const followups = analytics.followups || {}
+      addText(`Total Follow-ups Planned: ${followups.total || 0}`, 10, false)
+      const timeline = followups.timeline || []
+      timeline.forEach((fu, idx) => {
+        const fuStr = typeof fu === 'string' ? fu : (fu.day ? `Day ${fu.day}` : '')
+        addText(`  • ${fuStr}`, 9, false)
+      })
+
+      // ========== SUMMARY & HEALTH SCORE ==========
+      checkPageBreak(40)
+      addText('CAMPAIGN SUMMARY', 14, true, [34, 197, 94])
+      const summary = analytics.summary || {}
+      addText(`Total Actions: ${summary.total_actions || 0}`, 10, false)
+      addText(`Engagement Rate: ${summary.engagement_rate || 0}%`, 10, false)
+      addText(`Response Rate: ${summary.response_rate || 0}%`, 10, false)
+      addText(`Campaign Status: ${summary.campaign_status || 'N/A'}`, 10, false)
+      
+      checkPageBreak(20)
+      addText(`HEALTH SCORE: ${Math.round(analytics.health_score || 0)}`, 16, true, [34, 197, 94])
+
+      // Save PDF
+      pdf.save(`Campaign_Report_${analytics.campaign_name || 'Export'}_${new Date().toISOString().slice(0, 10)}.pdf`)
+
       setExportResult({
-        type: 'database',
+        success: true,
+        message: '✅ Campaign PDF downloaded successfully!'
+      })
+    } catch (error) {
+      console.error('Error generating PDF:', error)
+      setExportResult({
         success: false,
-        message: error.message
+        message: `❌ Failed to generate PDF: ${error.message}`
       })
     } finally {
       setExporting(false)
@@ -138,113 +167,46 @@ export const ExportPanel = ({ campaignId, campaignData }) => {
   }
 
   return (
-    <div className="h-full flex flex-col gap-4 p-6">
+    <div className="h-full flex flex-col gap-6 p-6">
       {/* Header */}
       <div>
-        <h2 className="text-2xl font-bold text-white mb-1">Export Intelligence Report</h2>
-        <p className="text-slate-400 text-sm">One-click export to your favorite tools</p>
+        <h2 className="text-2xl font-bold text-white mb-1">Campaign Report Export</h2>
+        <p className="text-slate-400 text-sm">Download comprehensive campaign details as PDF</p>
       </div>
 
-      {/* Export Options */}
-      <div className="space-y-3 flex-1">
-        {/* Save to Database */}
+      {/* Main PDF Download Button */}
+      <div className="flex-1 flex items-center justify-center">
         <button
-          onClick={saveToDB}
-          disabled={exporting}
-          className="w-full flex items-start gap-4 p-4 bg-slate-800/40 border border-slate-700/50 rounded-lg hover:border-slate-600 transition-colors disabled:opacity-50"
+          onClick={downloadCampaignPDF}
+          disabled={exporting || !campaignId}
+          className="relative group w-full max-w-sm"
         >
-          <div className="mt-1">
-            <BookOpen size={24} className="text-slate-400" />
-          </div>
-          <div className="flex-1 text-left">
-            <h4 className="text-white font-bold mb-1">Save to Database</h4>
-            <p className="text-sm text-slate-400">Store all campaign data in SQL database for future reference</p>
-          </div>
-          {exporting && exportResult?.type === 'database' ? (
-            <div className="animate-spin">
-              <div className="w-5 h-5 border-2 border-slate-600 border-t-cyan-400 rounded-full"></div>
-            </div>
-          ) : (
-            <Download size={20} className="text-slate-400" />
-          )}
-        </button>
-
-        {/* Export to Google Docs */}
-        <button
-          onClick={exportToGoogleDocs}
-          disabled={exporting}
-          className="w-full flex items-start gap-4 p-4 bg-slate-800/40 border border-slate-700/50 rounded-lg hover:border-slate-600 transition-colors disabled:opacity-50"
-        >
-          <div className="mt-1">
-            <FileText size={24} className="text-blue-400" />
-          </div>
-          <div className="flex-1 text-left">
-            <h4 className="text-white font-bold mb-1">Export to Google Docs</h4>
-            <p className="text-sm text-slate-400">Create a formatted document with all campaign details</p>
-          </div>
-          {exporting && exportResult?.type === 'google_docs' ? (
-            <div className="animate-spin">
-              <div className="w-5 h-5 border-2 border-slate-600 border-t-cyan-400 rounded-full"></div>
-            </div>
-          ) : (
-            <Download size={20} className="text-slate-400" />
-          )}
-        </button>
-
-        {/* Export to Notion */}
-        <div className="border border-slate-700/50 rounded-lg overflow-hidden bg-slate-800/40">
-          <button
-            onClick={() => setShowNotionInput(!showNotionInput)}
-            disabled={exporting}
-            className="w-full flex items-start gap-4 p-4 hover:bg-slate-900/30 transition-colors disabled:opacity-50 text-left"
-          >
-            <div className="mt-1">
-              <BookOpen size={24} className="text-purple-400" />
-            </div>
-            <div className="flex-1">
-              <h4 className="text-white font-bold mb-1">Export to Notion</h4>
-              <p className="text-sm text-slate-400">Push campaign to your Notion workspace</p>
-            </div>
-            {exporting && exportResult?.type === 'notion' ? (
-              <div className="animate-spin flex-shrink-0">
-                <div className="w-5 h-5 border-2 border-slate-600 border-t-cyan-400 rounded-full"></div>
-              </div>
+          <div className={`absolute -inset-0.5 bg-gradient-to-r from-purple-600 to-cyan-600 rounded-lg blur opacity-75 group-hover:opacity-100 transition duration-300 ${exporting ? 'opacity-50' : ''}`}></div>
+          <div className="relative px-8 py-6 bg-slate-900 rounded-lg flex flex-col items-center justify-center gap-4">
+            {exporting ? (
+              <>
+                <Loader size={48} className="text-cyan-400 animate-spin" />
+                <p className="text-lg font-bold text-white">Generating PDF...</p>
+                <p className="text-sm text-slate-400">Compiling all campaign data</p>
+              </>
             ) : (
-              <Download size={20} className="text-slate-400 flex-shrink-0" />
+              <>
+                <FileText size={48} className="text-cyan-400" />
+                <p className="text-lg font-bold text-white">Download Complete Campaign Report</p>
+                <p className="text-sm text-slate-400">All emails, analytics, objections, and details included</p>
+                <div className="flex items-center gap-2 mt-2 px-4 py-2 bg-slate-800/50 rounded border border-slate-700">
+                  <Download size={16} className="text-purple-400" />
+                  <span className="text-sm text-white font-medium">PDF Export</span>
+                </div>
+              </>
             )}
-          </button>
-
-          {/* Notion Input */}
-          {showNotionInput && (
-            <div className="border-t border-slate-700 px-4 py-3 bg-slate-900/20 space-y-3">
-              <div>
-                <label className="text-sm text-slate-400 mb-2 block">Notion Database ID</label>
-                <input
-                  type="text"
-                  value={notionDatabaseId}
-                  onChange={(e) => setNotionDatabaseId(e.target.value)}
-                  placeholder="Your Notion Database ID (32 characters)"
-                  className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded text-white text-sm placeholder-slate-500"
-                />
-                <p className="text-xs text-slate-500 mt-2">
-                  Don't have a Database ID? Create one in Notion, then get it from the URL or share options.
-                </p>
-              </div>
-              <button
-                onClick={exportToNotion}
-                disabled={exporting || !notionDatabaseId.trim()}
-                className="w-full px-4 py-2 bg-purple-500/20 border border-purple-500/30 rounded text-purple-400 hover:bg-purple-500/30 disabled:opacity-50 transition-colors font-medium text-sm"
-              >
-                {exporting ? 'Exporting...' : 'Export to Notion'}
-              </button>
-            </div>
-          )}
-        </div>
+          </div>
+        </button>
       </div>
 
       {/* Result Message */}
       {exportResult && (
-        <div className={`p-4 rounded-lg border flex items-start gap-3 ${
+        <div className={`p-4 rounded-lg border flex items-start gap-3 animate-in fade-in ${
           exportResult.success
             ? 'bg-green-500/10 border-green-500/30'
             : 'bg-red-500/10 border-red-500/30'
@@ -258,16 +220,22 @@ export const ExportPanel = ({ campaignId, campaignData }) => {
             <p className={`text-sm ${exportResult.success ? 'text-green-300' : 'text-red-300'}`}>
               {exportResult.message}
             </p>
-            {exportResult.notionPageId && (
-              <p className="text-xs text-slate-400 mt-2">Notion Page ID: {exportResult.notionPageId}</p>
-            )}
           </div>
         </div>
       )}
 
       {/* Info Box */}
-      <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 text-xs text-blue-300">
-        <strong>💡 Pro Tip:</strong> Export to Google Docs for easy sharing with your sales team. Export to Notion to integrate with your deal pipeline.
+      <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4 text-sm text-blue-300 space-y-2">
+        <p><strong>📋 What's Included:</strong></p>
+        <ul className="list-disc list-inside space-y-1 text-xs">
+          <li>Complete campaign overview and metadata</li>
+          <li>Company profile and opportunity scoring</li>
+          <li>All email sequences with quality scores</li>
+          <li>Conversion funnel analysis</li>
+          <li>Objection handling summary</li>
+          <li>Performance metrics and health score</li>
+          <li>Follow-up schedule</li>
+        </ul>
       </div>
     </div>
   )

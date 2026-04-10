@@ -10,7 +10,7 @@ export default function CampaignGenerator({ company, goal, onCompanyChange, onGo
         </div>
         <div>
           <h2 className="text-xl md:text-2xl font-bold text-gradient m-0">Campaign Generator</h2>
-          <p className="text-xs md:text-sm text-text-tertiary m-0 mt-1">Create intelligent outreach campaigns</p>
+          {/* <p className="text-xs md:text-sm text-text-tertiary m-0 mt-1">Create intelligent outreach campaigns</p> */}
         </div>
       </div>
 

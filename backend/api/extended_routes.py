@@ -1,7 +1,7 @@
 """
 Extended API routes for quality scoring, objections, exports, and lead dashboard
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Body
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Union
@@ -977,4 +977,420 @@ Return ONLY valid JSON.
             status_code=500,
             detail=f"Failed to search companies: {str(e)}"
         )
+
+# ============ CAMPAIGNS HISTORY ENDPOINTS ============
+@extended_router.get("/campaigns/list-all")
+async def list_all_campaigns(db: Session = Depends(get_db)):
+    """Get all campaigns with company and email data for history view"""
+    try:
+        campaigns = db.query(Campaign).order_by(Campaign.created_at.desc()).all()
+        
+        campaigns_data = []
+        for campaign in campaigns:
+            # Get company info
+            company = campaign.company
+            
+            # Get emails
+            emails = db.query(Email).filter(Email.campaign_id == campaign.id).all()
+            emails_data = [
+                {
+                    "id": email.id,
+                    "subject": email.subject,
+                    "body": email.body,
+                    "type": email.variant_type or "balanced",
+                    "sequence_number": email.sequence_number
+                }
+                for email in emails
+            ]
+            
+            # Get objections
+            objections = db.query(Objection).filter(Objection.campaign_id == campaign.id).all()
+            objections_data = [
+                {
+                    "id": obj.id,
+                    "objection": obj.objection_text,
+                    "response": obj.response_text
+                }
+                for obj in objections
+            ]
+            
+            campaigns_data.append({
+                "campaign_id": campaign.id,
+                "company_id": company.id,
+                "company_name": company.name,
+                "campaign_name": campaign.name,
+                "goal": campaign.goal,
+                "status": campaign.status,
+                "created_at": campaign.created_at.isoformat(),
+                "updated_at": campaign.updated_at.isoformat(),
+                "analysis": campaign.analysis_data,
+                "emails": emails_data,
+                "objections": objections_data,
+                "emails_count": len(emails_data),
+                "objections_count": len(objections_data)
+            })
+        
+        return {
+            "campaigns": campaigns_data,
+            "total_campaigns": len(campaigns_data)
+        }
+    
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Error fetching campaigns: {error_msg}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch campaigns: {error_msg}")
+
+@extended_router.get("/campaigns/{campaign_id}/details")
+async def get_campaign_details(campaign_id: int, db: Session = Depends(get_db)):
+    """Get full details of a specific campaign for loading"""
+    try:
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        
+        if not campaign:
+            raise HTTPException(status_code=404, detail=f"Campaign {campaign_id} not found")
+        
+        # Get company info
+        company = campaign.company
+        
+        # Get emails
+        emails = db.query(Email).filter(Email.campaign_id == campaign.id).order_by(Email.sequence_number).all()
+        emails_data = [
+            {
+                "id": email.id,
+                "subject": email.subject,
+                "body": email.body,
+                "type": email.variant_type or "balanced",
+                "sequence_number": email.sequence_number,
+                "to_email": email.to_email,
+                "status": email.status or "draft",
+                "sent_at": email.sent_at.isoformat() if email.sent_at else None,
+                "opened_at": email.opened_at.isoformat() if email.opened_at else None,
+                "open_count": email.open_count or 0
+            }
+            for email in emails
+        ]
+        
+        # Get objections
+        objections = db.query(Objection).filter(Objection.campaign_id == campaign.id).all()
+        objections_data = [
+            {
+                "id": obj.id,
+                "objection": obj.objection_text,
+                "response": obj.response_text
+            }
+            for obj in objections
+        ]
+        
+        # Get follow-ups
+        followups = db.query(FollowUp).filter(FollowUp.campaign_id == campaign.id).all()
+        followups_data = [
+            {
+                "id": followup.id,
+                "sequence_day": followup.sequence_day,
+                "suggested_send_time": followup.suggested_send_time.isoformat() if followup.suggested_send_time else None,
+                "industry": followup.industry
+            }
+            for followup in followups
+        ]
+        
+        return {
+            "campaign_id": campaign.id,
+            "company_id": company.id,
+            "company": company.name,
+            "company_name": company.name,
+            "campaign_name": campaign.name,
+            "goal": campaign.goal,
+            "status": campaign.status,
+            "created_at": campaign.created_at.isoformat(),
+            "updated_at": campaign.updated_at.isoformat(),
+            "analysis": campaign.analysis_data or {},
+            "emails": emails_data,
+            "objections": objections_data,
+            "follow_up_schedule": {
+                "followups": followups_data
+            }
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Error fetching campaign {campaign_id}: {error_msg}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch campaign: {error_msg}")
+
+@extended_router.delete("/campaigns/{campaign_id}/delete")
+async def delete_campaign(campaign_id: int, db: Session = Depends(get_db)):
+    """Delete a campaign and all its related data"""
+    try:
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        
+        if not campaign:
+            raise HTTPException(status_code=404, detail=f"Campaign {campaign_id} not found")
+        
+        company_name = campaign.company.name if campaign.company else "Unknown"
+        
+        # Delete all related emails
+        db.query(Email).filter(Email.campaign_id == campaign_id).delete()
+        
+        # Delete all related objections
+        db.query(Objection).filter(Objection.campaign_id == campaign_id).delete()
+        
+        # Delete all related follow-ups
+        db.query(FollowUp).filter(FollowUp.campaign_id == campaign_id).delete()
+        
+        # Delete the campaign itself
+        db.delete(campaign)
+        db.commit()
+        
+        return {
+            "status": "success",
+            "message": f"Campaign '{campaign.name}' for {company_name} has been deleted",
+            "campaign_id": campaign_id
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        error_msg = str(e)
+        print(f"❌ Error deleting campaign {campaign_id}: {error_msg}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete campaign: {error_msg}")
+
+@extended_router.put("/emails/{email_id}/send")
+async def send_email(email_id: int, body: dict = Body(...), db: Session = Depends(get_db)):
+    """Mark an email as sent and update recipient"""
+    try:
+        print(f"📧 send_email called with email_id={email_id}, body={body}")
+        
+        recipient = body.get("recipient") if isinstance(body, dict) else None
+        
+        if not recipient or not recipient.strip():
+            print(f"❌ No recipient provided in body: {body}")
+            raise HTTPException(status_code=400, detail="Recipient email is required")
+        
+        print(f"🔍 Looking up email {email_id}")
+        email = db.query(Email).filter(Email.id == email_id).first()
+        
+        if not email:
+            print(f"❌ Email {email_id} not found in database")
+            raise HTTPException(status_code=404, detail=f"Email {email_id} not found")
+        
+        # Update email status to sent
+        print(f"💾 Updating email {email_id}: status='sent', to_email='{recipient}'")
+        email.status = "sent"
+        email.to_email = recipient
+        email.sent_at = datetime.utcnow()
+        
+        # Explicitly mark for update
+        db.add(email)
+        db.commit()
+        db.refresh(email)
+        
+        print(f"✅ Email {email_id} successfully sent to {recipient}")
+        print(f"   Updated in DB: status={email.status}, to_email={email.to_email}, sent_at={email.sent_at}")
+        
+        return {
+            "status": "success",
+            "message": f"Email sent to {recipient}",
+            "email_id": email_id,
+            "sent_at": email.sent_at.isoformat(),
+            "new_status": email.status
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        error_msg = str(e)
+        print(f"❌ Error sending email {email_id}: {error_msg}")
+        print(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {error_msg}")
+
+@extended_router.get("/campaigns/{campaign_id}/analytics")
+async def get_campaign_analytics(campaign_id: int, db: Session = Depends(get_db)):
+    """Get comprehensive analytics for a campaign"""
+    try:
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        
+        company = campaign.company
+        emails = db.query(Email).filter(Email.campaign_id == campaign_id).all()
+        objections = db.query(Objection).filter(Objection.campaign_id == campaign_id).all()
+        followups = db.query(FollowUp).filter(FollowUp.campaign_id == campaign_id).all()
+        
+        # Calculate email statistics
+        total_emails = len(emails)
+        drafted_emails = len([e for e in emails if e.status == "draft"])
+        sent_emails = len([e for e in emails if e.status == "sent"])
+        opened_emails = len([e for e in emails if e.status == "opened"])
+        failed_emails = len([e for e in emails if e.status == "failed"])
+        
+        avg_confidence = sum(e.confidence_score or 0 for e in emails) / total_emails if total_emails else 0
+        avg_personalization = sum(e.personalization_score or 0 for e in emails) / total_emails if total_emails else 0
+        
+        # Email quality distribution
+        quality_scores = {
+            "excellent": len([e for e in emails if (e.confidence_score or 0) >= 80]),
+            "good": len([e for e in emails if 60 <= (e.confidence_score or 0) < 80]),
+            "fair": len([e for e in emails if 40 <= (e.confidence_score or 0) < 60]),
+            "poor": len([e for e in emails if (e.confidence_score or 0) < 40])
+        }
+        
+        # Calculate open rate
+        open_rate = (opened_emails / sent_emails * 100) if sent_emails > 0 else 0
+        
+        # Response rate from objections
+        objection_count = len(objections)
+        
+        # Timeline data for chart
+        followup_timeline = [
+            {
+                "day": f.sequence_day,
+                "date": f.suggested_send_time.isoformat() if f.suggested_send_time else None,
+                "rationale": f.rationale or f"Follow-up {f.sequence_day}"
+            }
+            for f in sorted(followups, key=lambda x: x.sequence_day)
+        ]
+        
+        # Email type breakdown
+        email_types = {}
+        for email in emails:
+            email_type = email.variant_type or "balanced"
+            if email_type not in email_types:
+                email_types[email_type] = 0
+            email_types[email_type] += 1
+        
+        # Email performance by sequence
+        email_performance = []
+        for email in sorted(emails, key=lambda x: x.sequence_number or 0):
+            email_performance.append({
+                "sequence": email.sequence_number or 0,
+                "subject": email.subject[:50] + "..." if len(email.subject or "") > 50 else email.subject,
+                "status": email.status,
+                "confidence": email.confidence_score or 0,
+                "personalization": email.personalization_score or 0
+            })
+        
+        # Conversion funnel
+        funnel = [
+            {"stage": "Created", "count": total_emails, "percentage": 100},
+            {"stage": "Sent", "count": sent_emails, "percentage": round((sent_emails / total_emails * 100) if total_emails else 0, 2)},
+            {"stage": "Opened", "count": opened_emails, "percentage": round((opened_emails / sent_emails * 100) if sent_emails else 0, 2)},
+            {"stage": "Replied", "count": objection_count, "percentage": round((objection_count / opened_emails * 100) if opened_emails else 0, 2)}
+        ]
+        
+        # Objection handling metrics
+        objection_responses = []
+        for obj in objections[:5]:  # Top 5 objections
+            objection_responses.append({
+                "objection": obj.objection_text[:60] + "..." if len(obj.objection_text or "") > 60 else obj.objection_text,
+                "response_quality": 85.0 if obj.response_approach == "empathetic" else 80.0 if obj.response_approach == "logical" else 75.0
+            })
+        
+        # Company profile metrics
+        company_metrics = {
+            "name": company.name,
+            "industry": company.industry or "Unknown",
+            "size": company.size or "Unknown",
+            "location": company.location or "Unknown",
+            "opportunity_score": company.opportunity_score,
+            "fit_score": company.fit_score,
+            "urgency": company.urgency_level,
+            "decision_maker": company.decision_maker or "Not specified",
+            "budget_indicator": "High" if company.opportunity_score > 75 else "Medium" if company.opportunity_score > 50 else "Low"
+        }
+        
+        # Performance indicators
+        performance_indicators = {
+            "email_quality": round(avg_confidence, 2),
+            "personalization_level": round(avg_personalization, 2),
+            "engagement_potential": round(open_rate, 2),
+            "objection_coverage": round((objection_count / max(1, sent_emails)) * 100, 2),
+            "follow_up_readiness": len(followups),
+            "campaign_momentum": "Strong" if open_rate > 50 else "Moderate" if open_rate > 25 else "Building"
+        }
+        
+        # Overall health score
+        health_score = round((avg_confidence * 0.3 + avg_personalization * 0.25 + (100 - open_rate) * 0.2 + (objection_count / max(1, sent_emails)) * 100 * 0.25), 2)
+        
+        return {
+            "campaign_id": campaign_id,
+            "company_name": company.name,
+            "campaign_name": campaign.name,
+            "status": campaign.status,
+            "created_at": campaign.created_at.isoformat(),
+            "updated_at": campaign.updated_at.isoformat(),
+            
+            # Email metrics
+            "emails": {
+                "total": total_emails,
+                "drafted": drafted_emails,
+                "sent": sent_emails,
+                "opened": opened_emails,
+                "failed": failed_emails,
+                "open_rate": round(open_rate, 2),
+                "avg_confidence_score": round(avg_confidence, 2),
+                "avg_personalization_score": round(avg_personalization, 2)
+            },
+            
+            # Email types breakdown
+            "email_types": email_types,
+            
+            # Email performance sequence
+            "email_performance": email_performance,
+            
+            # Quality distribution
+            "quality_distribution": quality_scores,
+            
+            # Conversion funnel
+            "funnel": funnel,
+            
+            # Objection metrics
+            "objections": {
+                "total": objection_count,
+                "covered_percentage": round((objection_count / max(1, total_emails)) * 100, 2),
+                "top_objections": objection_responses
+            },
+            
+            # Follow-up metrics
+            "followups": {
+                "total": len(followups),
+                "timeline": followup_timeline
+            },
+            
+            # Company profile
+            "company": company_metrics,
+            
+            # Performance indicators
+            "performance": performance_indicators,
+            
+            # Opportunity metrics
+            "opportunity": {
+                "company_opportunity_score": company.opportunity_score,
+                "fit_score": company.fit_score,
+                "urgency_level": company.urgency_level,
+                "decision_maker": company.decision_maker
+            },
+            
+            # Overall health score
+            "health_score": health_score,
+            
+            # Summary
+            "summary": {
+                "total_actions": total_emails + objection_count + len(followups),
+                "engagement_rate": round(open_rate, 2),
+                "response_rate": round((objection_count / max(1, sent_emails)) * 100, 2),
+                "campaign_status": "Active" if campaign.status == "draft" else campaign.status
+            }
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error fetching campaign analytics: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Failed to fetch analytics: {str(e)}")
+
 
